@@ -1,0 +1,10 @@
+cd ~/cs350-os161/os161-1.99/kern/conf
+./config ASST2
+cd ../compile/ASST2
+bmake depend
+bmake
+bmake install
+
+cd ~/cs350-os161/root
+sys161 kernel "p uw-testbin/onefork"
+
