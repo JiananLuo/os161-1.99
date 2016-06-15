@@ -49,7 +49,8 @@
 #include <vnode.h>
 #include <vfs.h>
 #include <synch.h>
-#include <kern/fcntl.h>  
+#include <kern/fcntl.h>
+#include "opt-A2.h"
 
 /*
  * The process for the kernel; this holds all the kernel-only threads.
@@ -63,13 +64,55 @@ struct proc *kproc;
 /* count of the number of processes, excluding kproc */
 static volatile unsigned int proc_count;
 /* provides mutual exclusion for proc_count */
-/* it would be better to use a lock here, but we use a semaphore because locks are not implemented in the base kernel */ 
+/* it would be better to use a lock here, but we use a semaphore because locks are not implemented in the base kernel */
 static struct semaphore *proc_count_mutex;
 /* used to signal the kernel menu thread when there are no processes */
-struct semaphore *no_proc_sem;   
+struct semaphore *no_proc_sem;
 #endif  // UW
 
+#if OPT_A2
+	struct array * processTable;
+	static struct lock * maLock;
+#endif
 
+#if OPT_A2
+	void lock_init(void)
+	{
+	  	maLock = lock_create("maLock");
+	  	if (maLock == NULL) {
+	    	panic("could not create lock");
+	  	}
+	  	return;
+	}
+
+
+	int assignUnusedPid(struct proc *proc)
+	{
+		lock_acquire(maLock);
+
+			unsigned int counter = 0;
+			while(counter < processTable->num)
+			{
+				if(array_get(processTable, counter) == NULL)
+				{
+					break;
+				}
+				counter++;
+			}
+
+			//ALL PID ARE USING CASE
+			if(counter > PID_MAX)
+				return -1;
+
+			//success CASE
+			proc->pid = PID_MIN + counter;
+			array_add(processTable, proc, NULL);
+			proc_count++;
+
+		lock_release(maLock);
+		return 0;
+	}
+#endif
 
 /*
  * Create a proc structure.
@@ -163,6 +206,11 @@ proc_destroy(struct proc *proc)
 	}
 #endif // UW
 
+#if OPT_A2
+	array_set(processTable, proc->pid - PID_MIN, NULL);
+	proc_count--;
+#endif
+
 	threadarray_cleanup(&proc->p_threads);
 	spinlock_cleanup(&proc->p_lock);
 
@@ -174,7 +222,7 @@ proc_destroy(struct proc *proc)
         /* note: kproc is not included in the process count, but proc_destroy
 	   is never called on kproc (see KASSERT above), so we're OK to decrement
 	   the proc_count unconditionally here */
-	P(proc_count_mutex); 
+	P(proc_count_mutex);
 	KASSERT(proc_count > 0);
 	proc_count--;
 	/* signal the kernel menu thread if the process count has reached zero */
@@ -183,7 +231,7 @@ proc_destroy(struct proc *proc)
 	}
 	V(proc_count_mutex);
 #endif // UW
-	
+
 
 }
 
@@ -207,7 +255,14 @@ proc_bootstrap(void)
   if (no_proc_sem == NULL) {
     panic("could not create no_proc_sem semaphore\n");
   }
-#endif // UW 
+#endif // UW
+
+#if OPT_A2
+	lock_init();
+	processTable = array_create();
+	array_init(processTable);
+#endif
+
 }
 
 /*
@@ -227,6 +282,14 @@ proc_create_runprogram(const char *name)
 		return NULL;
 	}
 
+#if OPT_A2
+	if(assignUnusedPid(proc) == -1)
+	{
+		proc_destroy(proc);
+		return NULL;
+	}
+#endif
+
 #ifdef UW
 	/* open the console - this should always succeed */
 	console_path = kstrdup("con:");
@@ -238,7 +301,7 @@ proc_create_runprogram(const char *name)
 	}
 	kfree(console_path);
 #endif // UW
-	  
+
 	/* VM fields */
 
 	proc->p_addrspace = NULL;
@@ -266,7 +329,7 @@ proc_create_runprogram(const char *name)
 	/* increment the count of processes */
         /* we are assuming that all procs, including those created by fork(),
            are created using a call to proc_create_runprogram  */
-	P(proc_count_mutex); 
+	P(proc_count_mutex);
 	proc_count++;
 	V(proc_count_mutex);
 #endif // UW
@@ -334,7 +397,7 @@ curproc_getas(void)
 {
 	struct addrspace *as;
 #ifdef UW
-        /* Until user processes are created, threads used in testing 
+        /* Until user processes are created, threads used in testing
          * (i.e., kernel threads) have no process or address space.
          */
 	if (curproc == NULL) {

@@ -38,6 +38,8 @@
 
 #include <spinlock.h>
 #include <thread.h> /* required for struct threadarray */
+#include <limits.h>
+#include "opt-A2.h"
 
 struct addrspace;
 struct vnode;
@@ -69,6 +71,10 @@ struct proc {
 #endif
 
 	/* add more material here as needed */
+#if OPT_A2
+	pid_t pid;
+	pid_t parent_pid;
+#endif
 };
 
 /* This is the process structure for the kernel and for kernel-only threads. */
@@ -100,5 +106,9 @@ struct addrspace *curproc_getas(void);
 /* Change the address space of the current process, and return the old one. */
 struct addrspace *curproc_setas(struct addrspace *);
 
+#if OPT_A2
+	void lock_init(void);
+	int assignUnusedPid(struct proc *proc);
+#endif
 
 #endif /* _PROC_H_ */

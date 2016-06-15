@@ -10,6 +10,9 @@
 #include <addrspace.h>
 #include <copyinout.h>
 
+#include "opt-A2.h"
+#include <mips/trapframe.h>
+
   /* this implementation of sys__exit does not do anything with the exit code */
   /* this needs to be fixed to get exit() and waitpid() working properly */
 
@@ -42,7 +45,7 @@ void sys__exit(int exitcode) {
   /* if this is the last user process in the system, proc_destroy()
      will wake up the kernel menu thread */
   proc_destroy(p);
-  
+
   thread_exit();
   /* thread_exit() does not return, so we should never get here */
   panic("return from thread_exit in sys_exit\n");
@@ -53,9 +56,13 @@ void sys__exit(int exitcode) {
 int
 sys_getpid(pid_t *retval)
 {
-  /* for now, this is just a stub that always returns a PID of 1 */
-  /* you need to fix this to make it work properly */
-  *retval = 1;
+  #if OPT_A2
+    struct proc *p = curproc;
+    *retval = p->pid;
+  #else
+    *retval = 1;
+  #endif
+
   return(0);
 }
 
@@ -72,7 +79,7 @@ sys_waitpid(pid_t pid,
 
   /* this is just a stub implementation that always reports an
      exit status of 0, regardless of the actual exit status of
-     the specified process.   
+     the specified process.
      In fact, this will return 0 even if the specified process
      is still running, and even if it never existed in the first place.
 
@@ -92,3 +99,46 @@ sys_waitpid(pid_t pid,
   return(0);
 }
 
+#if OPT_A2
+int
+sys_fork(struct trapframe * parent_trapframe, pid_t * retval)
+{
+  int result;
+  struct proc *cp = curproc;
+  struct thread *ct = curthread;
+
+  //Create process structure for child process
+  struct proc * child_process;
+  child_process = proc_create_runprogram(cp->p_name);
+
+  //Create and copy address space
+  struct addrspace * child_addrspace;
+  result = as_copy(cp->p_addrspace, &child_addrspace);
+  if(result)
+  {
+    proc_destroy(child_process);
+    return result;
+  }
+  child_process->p_addrspace = child_addrspace;
+
+  //Create the parent/child relationship
+  child_process->parent_pid = cp->pid;
+
+  //pass the trapframe to the child thread
+  struct trapframe * child_trapframe;
+  child_trapframe = kmalloc(sizeof(struct trapframe));
+  memcpy(child_trapframe, parent_trapframe, sizeof(struct trapframe));
+
+  //Create thread for child process
+  result = thread_fork(ct->t_name, child_process, (void *)enter_forked_process, child_trapframe, 0);
+  if(result)
+  {
+    kfree(child_addrspace);
+    proc_destroy(child_process);
+    return result;
+  }
+
+  *retval = child_process->pid;
+  return 0;
+}
+#endif
