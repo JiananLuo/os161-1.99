@@ -133,8 +133,29 @@ sys_waitpid(pid_t pid,
   if (options != 0) {
     return(EINVAL);
   }
-  /* for now, just pretend the exitstatus is 0 */
-  exitstatus = 0;
+
+  #if OPT_A2
+    struct proc * child_process;
+    lock_acquire(pidTableLock);
+      child_process = array_get(processTable, pid - PID_MIN);
+    lock_release(pidTableLock);
+    if(child_process == NULL)
+    {
+        return ESRCH;
+    }
+
+    lock_acquire(child_process->sleepLk);
+        if(child_process->exitState == false)
+        {
+            cv_wait(child_process->sleepCv, child_process->sleepLk);
+        }
+        exitstatus = child_process->exitCode;
+    lock_release(child_process->sleepLk);
+  #else
+    /* for now, just pretend the exitstatus is 0 */
+    exitstatus = 0;
+  #endif
+
   result = copyout((void *)&exitstatus,status,sizeof(int));
   if (result) {
     return(result);

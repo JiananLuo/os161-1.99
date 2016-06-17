@@ -1,3 +1,3 @@
 git add .
-git commit -m "Add run"
+git commit -m "Add sys_waitpid"
 git push
