@@ -71,24 +71,20 @@ struct semaphore *no_proc_sem;
 #endif  // UW
 
 #if OPT_A2
-	struct array * processTable;
-	static struct lock * maLock;
-#endif
-
-#if OPT_A2
-	void lock_init(void)
+	void global_lock_init(void)
 	{
-	  	maLock = lock_create("maLock");
-	  	if (maLock == NULL) {
-	    	panic("could not create lock");
-	  	}
-	  	return;
+			pidTableLock = lock_create("pidTableLock");
+			if (pidTableLock == NULL) {
+				panic("could not create lock");
+			}
+
+			return;
 	}
 
 
 	int assignUnusedPid(struct proc *proc)
 	{
-		lock_acquire(maLock);
+		lock_acquire(pidTableLock);
 
 			unsigned int counter = 0;
 			while(counter < processTable->num)
@@ -107,10 +103,28 @@ struct semaphore *no_proc_sem;
 			//success CASE
 			proc->pid = PID_MIN + counter;
 			array_add(processTable, proc, NULL);
-			proc_count++;
 
-		lock_release(maLock);
+		lock_release(pidTableLock);
 		return 0;
+	}
+
+	void proc_lock_init(struct proc *proc)
+	{
+			proc->sleepCv = cv_create("sleepCv");
+			if (proc->sleepCv == NULL) {
+				panic("could not create cv");
+			}
+			proc->sleepLk = lock_create("sleepLk");
+			if (proc->sleepLk == NULL) {
+				panic("could not create lock");
+			}
+			return;
+	}
+
+	void proc_state_init(struct proc *proc)
+	{
+			proc->parent_pid = -1;
+			proc->exitState = false;
 	}
 #endif
 
@@ -207,8 +221,9 @@ proc_destroy(struct proc *proc)
 #endif // UW
 
 #if OPT_A2
+	lock_destroy(proc->sleepLk);
+	cv_destroy(proc->sleepCv);
 	array_set(processTable, proc->pid - PID_MIN, NULL);
-	proc_count--;
 #endif
 
 	threadarray_cleanup(&proc->p_threads);
@@ -258,7 +273,7 @@ proc_bootstrap(void)
 #endif // UW
 
 #if OPT_A2
-	lock_init();
+	global_lock_init();
 	processTable = array_create();
 	array_init(processTable);
 #endif
@@ -287,6 +302,11 @@ proc_create_runprogram(const char *name)
 	{
 		proc_destroy(proc);
 		return NULL;
+	}
+	else
+	{
+		proc_state_init(proc);
+		proc_lock_init(proc);
 	}
 #endif
 

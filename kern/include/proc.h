@@ -39,13 +39,20 @@
 #include <spinlock.h>
 #include <thread.h> /* required for struct threadarray */
 #include <limits.h>
+
 #include "opt-A2.h"
+#include <synch.h>
 
 struct addrspace;
 struct vnode;
 #ifdef UW
 struct semaphore;
 #endif // UW
+
+#if OPT_A2
+	struct array * processTable;
+	struct lock * pidTableLock;
+#endif
 
 /*
  * Process structure.
@@ -74,6 +81,12 @@ struct proc {
 #if OPT_A2
 	pid_t pid;
 	pid_t parent_pid;
+
+	bool exitState;
+	int exitCode;
+
+	struct cv * sleepCv;
+	struct lock * sleepLk;
 #endif
 };
 
@@ -107,8 +120,10 @@ struct addrspace *curproc_getas(void);
 struct addrspace *curproc_setas(struct addrspace *);
 
 #if OPT_A2
-	void lock_init(void);
+	void global_lock_init(void);
 	int assignUnusedPid(struct proc *proc);
+	void proc_lock_init(struct proc *proc);
+	void proc_state_init(struct proc *proc);
 #endif
 
 #endif /* _PROC_H_ */

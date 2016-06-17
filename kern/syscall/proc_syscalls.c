@@ -38,6 +38,48 @@ void sys__exit(int exitcode) {
   as = curproc_setas(NULL);
   as_destroy(as);
 
+
+
+#if OPT_A2
+  struct proc * cp = curproc;
+  struct proc * temp;
+
+lock_acquire(pidTableLock);
+  for(unsigned int i = 0; i < processTable->num; i++)
+  {
+      temp = array_get(processTable, i);
+      if(temp != NULL && temp->parent_pid == cp->pid)
+      {
+          if(temp->exitState == true) // those child process will be destory
+          {
+              proc_destroy(temp);
+          }
+          else // parent will free the children
+          {
+              temp->parent_pid = -1;
+          }
+      }
+  }
+lock_release(pidTableLock);
+
+
+  proc_remthread(curthread);
+  if(cp->parent_pid == -1)
+  {
+      //父母双亡 直接走
+      proc_destroy(p);
+  }
+  else
+  {
+      //父母健在 wocao
+      cp->exitState = true;
+      cp->exitCode = _MKWAIT_EXIT(exitcode);
+
+      lock_acquire(cp->sleepLk);
+          cv_signal(cp->sleepCv, cp->sleepLk);
+      lock_release(cp->sleepLk);
+  }
+#else
   /* detach this thread from its process */
   /* note: curproc cannot be used after this call */
   proc_remthread(curthread);
@@ -45,6 +87,8 @@ void sys__exit(int exitcode) {
   /* if this is the last user process in the system, proc_destroy()
      will wake up the kernel menu thread */
   proc_destroy(p);
+#endif
+
 
   thread_exit();
   /* thread_exit() does not return, so we should never get here */
