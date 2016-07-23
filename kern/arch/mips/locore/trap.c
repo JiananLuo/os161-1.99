@@ -40,6 +40,10 @@
 #include <mainbus.h>
 #include <syscall.h>
 
+#include "opt-A3.h"
+#include <kern/wait.h>
+#include <addrspace.h>
+#include <proc.h>
 
 /* in exception.S */
 extern void asm_usermode(struct trapframe *tf);
@@ -108,9 +112,52 @@ kill_curthread(vaddr_t epc, unsigned code, vaddr_t vaddr)
 		break;
 	}
 
+#if OPT_A3
+	struct addrspace *as;
+	struct proc *p = curproc;
+	DEBUG(DB_SYSCALL,"Syscall: _exit(%d)\n",sig);
+	KASSERT(curproc->p_addrspace != NULL);
+	as_deactivate();
+	as = curproc_setas(NULL);
+	as_destroy(as);
+	struct proc * cp = curproc;
+	struct proc * temp;
+	lock_acquire(pidTableLock);
+	for(unsigned int i = 0; i < processTable->num; i++)
+	{
+			temp = array_get(processTable, i);
+			if(temp != NULL && temp->parent_pid == cp->pid)
+			{
+					if(temp->exitState == true) // those child process will be destory
+					{
+							proc_destroy(temp);
+					}
+					else // parent will free the children
+					{
+							temp->parent_pid = -1;
+					}
+			}
+	}
+	lock_release(pidTableLock);
+	proc_remthread(curthread);
+	if(cp->parent_pid == -1)
+	{
+			proc_destroy(p);
+	}
+	else
+	{
+			cp->exitState = true;
+			cp->exitCode = _MKWAIT_SIG(sig);
+			lock_acquire(cp->sleepLk);
+					cv_signal(cp->sleepCv, cp->sleepLk);
+			lock_release(cp->sleepLk);
+	}
+	thread_exit();
+#else
 	/*
 	 * You will probably want to change this.
 	 */
+#endif
 
 	kprintf("Fatal user mode trap %u sig %d (%s, epc 0x%x, vaddr 0x%x)\n",
 		code, sig, trapcodenames[code], epc, vaddr);
@@ -217,7 +264,7 @@ mips_trap(struct trapframe *tf)
 		KASSERT(curthread->t_curspl == 0);
 		KASSERT(curthread->t_iplhigh_count == 0);
 
-		DEBUG(DB_SYSCALL, "syscall: #%d, args %x %x %x %x\n", 
+		DEBUG(DB_SYSCALL, "syscall: #%d, args %x %x %x %x\n",
 		      tf->tf_v0, tf->tf_a0, tf->tf_a1, tf->tf_a2, tf->tf_a3);
 
 		syscall(tf);
@@ -248,11 +295,11 @@ mips_trap(struct trapframe *tf)
 	case EX_IBE:
 	case EX_DBE:
 		/*
-		 * This means you loaded invalid TLB entries, or 
-		 * touched invalid parts of the direct-mapped 
+		 * This means you loaded invalid TLB entries, or
+		 * touched invalid parts of the direct-mapped
 		 * segments. These are serious kernel errors, so
 		 * panic.
-		 * 
+		 *
 		 * The MIPS won't even tell you what invalid address
 		 * caused the bus error.
 		 */
@@ -282,8 +329,8 @@ mips_trap(struct trapframe *tf)
 	 * set by copyin/copyout and related functions to signify that
 	 * the addresses they're accessing are userlevel-supplied and
 	 * not trustable. What we actually want to do is resume
-	 * execution at the function pointed to by badfaultfunc. That's 
-	 * going to be "copyfail" (see copyinout.c), which longjmps 
+	 * execution at the function pointed to by badfaultfunc. That's
+	 * going to be "copyfail" (see copyinout.c), which longjmps
 	 * back to copyin/copyout or wherever and returns EFAULT.
 	 *
 	 * Note that we do not just *call* this function, because that
@@ -308,7 +355,7 @@ mips_trap(struct trapframe *tf)
 
 	kprintf("panic: Fatal exception %u (%s) in kernel mode\n", code,
 		trapcodenames[code]);
-	kprintf("panic: EPC 0x%x, exception vaddr 0x%x\n", 
+	kprintf("panic: EPC 0x%x, exception vaddr 0x%x\n",
 		tf->tf_epc, tf->tf_vaddr);
 
 	panic("I can't handle this... I think I'll just die now...\n");
