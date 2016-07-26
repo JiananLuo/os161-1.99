@@ -53,10 +53,49 @@
  */
 static struct spinlock stealmem_lock = SPINLOCK_INITIALIZER;
 
+#if OPT_A3
+	struct Frame
+	{
+		paddr_t pAddress;
+		bool inUse;
+		int numOfContinueFrame;
+	};
+	struct Frame * frameList;
+
+	int numOfFrame;
+	bool bCalled = false;
+#endif
+
 void
 vm_bootstrap(void)
 {
+	#if OPT_A3
+		paddr_t pMemBase;
+		paddr_t pMemStart;
+		paddr_t pMemEnd;
+
+		ram_getsize(&pMemBase, &pMemEnd);
+		numOfFrame = ((pMemEnd - pMemBase) / PAGE_SIZE);
+
+		pMemStart = pMemBase+numOfFrame*sizeof(struct Frame);
+		pMemStart = ROUNDUP(pMemStart, PAGE_SIZE);
+
+		frameList = (struct Frame *) PADDR_TO_KVADDR(pMemBase);
+		for(int i=0; i<numOfFrame; i++)
+		{
+			frameList[i].pAddress = pMemBase + (i * PAGE_SIZE);
+			frameList[i].inUse = false;
+			frameList[i].numOfContinueFrame = 0;
+			if(frameList[i].pAddress < pMemStart)
+			{
+				frameList[i].inUse = true;
+			}
+		}
+
+		bCalled = true;
+	#else
 	/* Do nothing. */
+	#endif
 }
 
 static
@@ -66,8 +105,42 @@ getppages(unsigned long npages)
 	paddr_t addr;
 
 	spinlock_acquire(&stealmem_lock);
+#if OPT_A3
+	if(bCalled == false)
+	{
+		addr = ram_stealmem(npages);
+	}
+	else
+	{
+		int i = 0;
+		int count = 0;
+		for(; i<numOfFrame; i++)
+		{
+			if(frameList[i].inUse)
+			{
+				count = 0;
+				continue;
+			}
+			count++;
 
+			if(count == (int)npages)
+			{
+				break;
+			}
+		}
+
+		int numOfContinueFrame = count - 1;
+		int start = i - numOfContinueFrame;
+		frameList[start].numOfContinueFrame = numOfContinueFrame;
+		for(int j=start; j<=i; j++)
+		{
+			frameList[j].inUse = true;
+		}
+		addr = frameList[start].pAddress;
+	}
+#else
 	addr = ram_stealmem(npages);
+#endif
 
 	spinlock_release(&stealmem_lock);
 	return addr;
@@ -88,9 +161,28 @@ alloc_kpages(int npages)
 void
 free_kpages(vaddr_t addr)
 {
+#if OPT_A3
+spinlock_acquire(&stealmem_lock);
+	paddr_t maPaddr = addr - MIPS_KSEG0;
+	int i = 0;
+	for(; i<numOfFrame; i++)
+	{
+		if(frameList[i].pAddress == maPaddr)
+		{
+			break;
+		}
+	}
+	int n = frameList[i].numOfContinueFrame + i;
+	for(int j=i; j<=n; j++)
+	{
+		frameList[j].inUse = false;
+	}
+spinlock_release(&stealmem_lock);
+#else
 	/* nothing - leak the memory. */
 
 	(void)addr;
+#endif
 }
 
 void
@@ -259,6 +351,11 @@ as_create(void)
 void
 as_destroy(struct addrspace *as)
 {
+#if OPT_A3
+	kfree((void *)PADDR_TO_KVADDR(as->as_pbase1));
+	kfree((void *)PADDR_TO_KVADDR(as->as_pbase2));
+	kfree((void *)PADDR_TO_KVADDR(as->as_stackpbase));
+#endif
 	kfree(as);
 }
 
