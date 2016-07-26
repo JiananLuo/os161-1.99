@@ -76,7 +76,10 @@ int runprogram(char *progname)
 
 #if OPT_A2
 	as = curproc_getas();
-	as_destroy(as);
+	if(as != NULL)
+	{
+		as_destroy(as);
+	}
 #else
 	/* We should be a new process. */
 	KASSERT(curproc_getas() == NULL);
